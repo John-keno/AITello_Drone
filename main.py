@@ -1,5 +1,3 @@
-import os
-
 from djitellopy import tello
 from threading import Thread
 import cv2 as cv
@@ -9,9 +7,9 @@ import sys
 import keyPressControl as Kp
 import time
 
-# keepRecording = True
+keepRecording = True
 global img
-# # Initialize opencv DNN
+# # Initialize Darknet DNN
 net = cv.dnn.readNet("darknet/yolov4-tiny.weights", "darknet/yolov4-tiny.cfg")
 model = cv.dnn_DetectionModel(net)
 
@@ -20,8 +18,10 @@ classFile = 'darknet/coco.names'
 with open(classFile, "r") as file_object:
     classNames = file_object.read().split('\n')
     print(classNames)
+
 # initialize keyboard
 Kp.init()
+
 # initialize drone
 uav = tello.Tello()
 uav.connect()
@@ -29,33 +29,21 @@ print(uav.get_battery())
 uav.streamoff()
 uav.streamon()
 uavFrame = uav.get_frame_read()
-viewFrame = Kp.getFrame((640, 480))
-
-# cap = cv.VideoCapture(0)
-# cap.set(3, 640)
-# cap.set(4, 480)
+viewFrame = Kp.getFrame((640, 480), '  TELLO AI Live Stream')
 
 
-# def record():
-#     # create a VideoWrite object, recording to ./video.avi
-#     height, width, _ = uavFrame.frame.shape
-#     video = cv.VideoWriter('video.avi', cv.VideoWriter_fourcc(*'XVID'), 30, (width, height))
-#
-#     while keepRecording:
-#         video.write(uav.frame)
-#         time.sleep(1 / 30)
-#
-#     video.release()
+def record():
+    # create a VideoWrite object, recording to ./video.avi
+    height, width, _ = uavFrame.frame.shape
+    video = cv.VideoWriter(f'TELLO AI Videos/{time.strftime("VID%Y%m%d%I%M%S")}.mp4',
+                           cv.VideoWriter_fourcc(*'XVID'), 30, (width, height))
 
+    while keepRecording:
+        video.write(uavFrame.frame)
+        time.sleep(1 / 30)
 
-#     outside the functions
-# recorder = Thread(target=record)
-# recorder.start()
-# recorder.join
+    video.release()
 
-
-# def capture():
-#     cv.imwrite("picture.png", uavFrame.frame)
 
 def get_keyboard_input():
     lr, fb, ud, yv = 0, 0, 0, 0
@@ -76,13 +64,13 @@ def get_keyboard_input():
         yv = -speed
     elif Kp.getKey("d"):
         yv = speed
-    # if Kp.getKey("q"):
-    #     # uav.land()
-    # if Kp.getKey("e"):
-    #     # uav.takeoff()
+    if Kp.getKey("q"):
+        uav.land()
+    if Kp.getKey("e"):
+        uav.takeoff()
     if Kp.getKey("z"):
         # save image in date format(yyyy-mm-dd-hh-mm-ss.jpg)
-        cv.imwrite(f'images/{time.strftime("%Y%m%d%I%M%S")}.jpg', img)
+        cv.imwrite(f'TELLO AI Captures/{time.strftime("%Y%m%d%I%M%S")}.jpg', img)
         time.sleep(0.03)
     return lr, fb, ud, yv
 
@@ -114,47 +102,68 @@ def detect_frames(frame, outputs, conf_thres=None, nms_Thres=None):
         x, y, w, h = box[0], box[1], box[2], box[3]
         class_name = classNames[class_ids[i]].upper()
         cvz.cornerRect(frame, box, t=2, colorR=(31, 255, 15), colorC=(255, 255, 255), l=20)
-        cv.putText(frame, f'{class_name} {round(float(conf_vals[i] * 100), 2)}%', (x, y - 15),
+        cv.putText(frame, f'{class_name} {round(float(conf_vals[i] * 100), 2)}%', (x, y - 10),
                    cv.FONT_HERSHEY_COMPLEX_SMALL, 1,
                    (31, 255, 15), 1)
 
 
+# Start recording thread
+stream = Thread(target=record)
+stream.start()
 while True:
     try:
         # ret, img = cap.read()
+
+        # get keyboard input
         vals = get_keyboard_input()
-        print(vals[0], vals[1], vals[2], vals[3])
-        print(time.ctime())
-        print(time.strftime("%Y%m%d%I%M%S"))
-        print(time.thread_time())
+
+        # send commands to UAV
         uav.send_rc_control(vals[0], vals[1], vals[2], vals[3])
+
+        # get video stream from UAV and resize to 640px by 480px
         img = uavFrame.frame
         img = cv.resize(img, (640, 480))
-        # ret, img = cap.read()
+
+        # convert UAV video to blob format
         blob = cv.dnn.blobFromImage(img, 1 / 255, (320, 320), [0, 0, 0], 1, crop=False)
         model.setInput(blob)
+
+        # get all layers name of Darknet DNN
         layerNames = model.getLayerNames()
         # print(layerNames)
 
-        # To get layers output names
+        # To get output layers names
         outputNames = [layerNames[i[0] - 1] for i in model.getUnconnectedOutLayers()]
         # print(outputNames)
-        # print(model.getUnconnectedOutLayers())
+
+        # forward outputs of Darknet DNN
         outputs = model.forward(outputNames)
         # print(len(outputs))
         # print(outputs[0].shape)
+
+        # get Detections from Darknet and draw bounding box(s)
         detect_frames(img, outputs, conf_thres=0.4, nms_Thres=0.2)
+
         # cv.imshow("UAV FEED", img)
+
+        # display frames
         Kp.getDisplay(img, viewFrame)
         cv.waitKey(1)
-        if Kp.win_close():
-            uav.land()
-            break
-
     except Exception as error:
-        print(error)
-        break
-uav.streamoff()
-uav.land()
-cv.destroyAllWindows()
-sys.exit(0)
+        print("Exception block", error)
+        keepRecording = False
+        stream.join()
+        uav.end()
+        sys.exit(0)
+    except KeyboardInterrupt:
+        keepRecording = False
+        stream.join()
+        uav.end()
+        sys.exit(0)
+    else:
+        # check if windows close button is clicked
+        if Kp.win_close():
+            keepRecording = False
+            stream.join()
+            uav.end()
+            sys.exit(0)
