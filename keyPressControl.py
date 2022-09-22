@@ -1,14 +1,19 @@
 import pygame
 import cv2 as cv
 import sys
+import time
+from threading import Thread
 
 
 def init():
     pygame.init()
 
 
-def getFrame(frame_size=(None, None)):
-    win = pygame.display.set_mode(frame_size)
+def getFrame(window_size=(None, None), window_name='display window'):
+    icon = pygame.image.load('UI/drone.png')
+    pygame.display.set_icon(icon)
+    win = pygame.display.set_mode(window_size)
+    pygame.display.set_caption(window_name)
     return win
 
 
@@ -34,6 +39,7 @@ def getKey(keyName):
 
 def getDisplay(cap_src=None, surface_src=None):
     pygame.surfarray.blit_array(surface_src, setFrame(cap_src))
+    pygame.draw.rect(surface_src, (255, 0, 0), (20, 25, 20, 5))
     pygame.display.update()
 
 
@@ -56,23 +62,53 @@ def win_close():
 
 
 if __name__ == "__main__":
+    # test code
     camera = cv.VideoCapture(0)
+    rec = True
     camera.set(3, 640)
     camera.set(4, 480)
     init()
-    pygame.display.set_caption("OpenCV camera stream on Pygame")
-    screen = getFrame((1280, 720))
+    screen = getFrame((640, 480), '  TELLO AI Live Stream')
+
 
     # # main()
+
+    def record():
+        # create a VideoWrite object, recording to ./video.avi
+
+        height, width = 480, 640
+        print(height)
+        print(width)
+        video = cv.VideoWriter(f'TELLO AI Videos/{time.strftime("VID%Y%m%d%I%M%S")}.avi',
+                               cv.VideoWriter_fourcc(*'XVID'), 30, (width, height))
+
+        while rec:
+            camera.read()
+            video.write(frame)
+            time.sleep(1 / 30)
+
+        video.release()
+
+
+    # main()
+    recorder = Thread(target=record)
+    recorder.start()
     try:
         while True:
             ret, frame = camera.read()
-            frame = cv.resize(frame, (1280, 720))
+            frame = cv.resize(frame, (640, 480))
             main()
+            pygame.draw.rect(screen, (255, 0, 0), (200, 250, 200, 5))
             getDisplay(frame, screen)
             cv.waitKey(1)
             if win_close():
+                rec = False
+                recorder.join()
                 sys.exit(0)
-    except:
+    except Exception as err:
+        print(err)
+        rec = False
+        recorder.join()
         pygame.quit()
         cv.destroyAllWindows()
+        sys.exit(0)
