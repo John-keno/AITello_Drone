@@ -1,12 +1,16 @@
+import os
+
 from djitellopy import tello
 from threading import Thread
 import cv2 as cv
 import cvzone as cvz
 import numpy as np
+import sys
+import keyPressControl as Kp
 import time
 
 # keepRecording = True
-
+global img
 # # Initialize opencv DNN
 net = cv.dnn.readNet("darknet/yolov4-tiny.weights", "darknet/yolov4-tiny.cfg")
 model = cv.dnn_DetectionModel(net)
@@ -16,7 +20,8 @@ classFile = 'darknet/coco.names'
 with open(classFile, "r") as file_object:
     classNames = file_object.read().split('\n')
     print(classNames)
-
+# initialize keyboard
+Kp.init()
 # initialize drone
 uav = tello.Tello()
 uav.connect()
@@ -24,7 +29,11 @@ print(uav.get_battery())
 uav.streamoff()
 uav.streamon()
 uavFrame = uav.get_frame_read()
+viewFrame = Kp.getFrame((640, 480))
+
 # cap = cv.VideoCapture(0)
+# cap.set(3, 640)
+# cap.set(4, 480)
 
 
 # def record():
@@ -47,6 +56,35 @@ uavFrame = uav.get_frame_read()
 
 # def capture():
 #     cv.imwrite("picture.png", uavFrame.frame)
+
+def get_keyboard_input():
+    lr, fb, ud, yv = 0, 0, 0, 0
+    speed = 50
+    if Kp.getKey("LEFT"):
+        lr = -speed
+    elif Kp.getKey("RIGHT"):
+        lr = speed
+    if Kp.getKey("UP"):
+        fb = speed
+    elif Kp.getKey("DOWN"):
+        fb = -speed
+    if Kp.getKey("w"):
+        ud = speed
+    elif Kp.getKey("s"):
+        ud = -speed
+    if Kp.getKey("a"):
+        yv = -speed
+    elif Kp.getKey("d"):
+        yv = speed
+    # if Kp.getKey("q"):
+    #     # uav.land()
+    # if Kp.getKey("e"):
+    #     # uav.takeoff()
+    if Kp.getKey("z"):
+        # save image in date format(yyyy-mm-dd-hh-mm-ss.jpg)
+        cv.imwrite(f'images/{time.strftime("%Y%m%d%I%M%S")}.jpg', img)
+        time.sleep(0.03)
+    return lr, fb, ud, yv
 
 
 def detect_frames(frame, outputs, conf_thres=None, nms_Thres=None):
@@ -76,13 +114,22 @@ def detect_frames(frame, outputs, conf_thres=None, nms_Thres=None):
         x, y, w, h = box[0], box[1], box[2], box[3]
         class_name = classNames[class_ids[i]].upper()
         cvz.cornerRect(frame, box, t=2, colorR=(31, 255, 15), colorC=(255, 255, 255), l=20)
-        cv.putText(frame, f'{class_name} {round(float(conf_vals[i] * 100),2)}%', (x, y - 15), cv.FONT_HERSHEY_COMPLEX_SMALL, 1,
+        cv.putText(frame, f'{class_name} {round(float(conf_vals[i] * 100), 2)}%', (x, y - 15),
+                   cv.FONT_HERSHEY_COMPLEX_SMALL, 1,
                    (31, 255, 15), 1)
 
 
 while True:
     try:
+        # ret, img = cap.read()
+        vals = get_keyboard_input()
+        print(vals[0], vals[1], vals[2], vals[3])
+        print(time.ctime())
+        print(time.strftime("%Y%m%d%I%M%S"))
+        print(time.thread_time())
+        uav.send_rc_control(vals[0], vals[1], vals[2], vals[3])
         img = uavFrame.frame
+        img = cv.resize(img, (640, 480))
         # ret, img = cap.read()
         blob = cv.dnn.blobFromImage(img, 1 / 255, (320, 320), [0, 0, 0], 1, crop=False)
         model.setInput(blob)
@@ -96,15 +143,18 @@ while True:
         outputs = model.forward(outputNames)
         # print(len(outputs))
         # print(outputs[0].shape)
-
         detect_frames(img, outputs, conf_thres=0.4, nms_Thres=0.2)
-        cv.imshow("UAV FEED", img)
-        uav.send_rc_control(0, 0, 0, 0)
-        if cv.waitKey(1) & 0xFF == ord('q'):
+        # cv.imshow("UAV FEED", img)
+        Kp.getDisplay(img, viewFrame)
+        cv.waitKey(1)
+        if Kp.win_close():
+            uav.land()
             break
 
     except Exception as error:
         print(error)
         break
-
+uav.streamoff()
+uav.land()
 cv.destroyAllWindows()
+sys.exit(0)
