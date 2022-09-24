@@ -4,11 +4,11 @@ import cv2 as cv
 import cvzone as cvz
 import numpy as np
 import sys
-import keyPressControl as Kp
+import KeyControlWindow as Win
 import time
 
+global frame
 keepRecording = True
-global img
 # # Initialize Darknet DNN
 net = cv.dnn.readNet("darknet/yolov4-tiny.weights", "darknet/yolov4-tiny.cfg")
 model = cv.dnn_DetectionModel(net)
@@ -20,7 +20,7 @@ with open(classFile, "r") as file_object:
     print(classNames)
 
 # initialize keyboard
-Kp.init()
+Win.init()
 
 # initialize drone
 uav = tello.Tello()
@@ -28,18 +28,26 @@ uav.connect()
 print(uav.get_battery())
 uav.streamoff()
 uav.streamon()
+uav.get_video_capture()
 uavFrame = uav.get_frame_read()
-viewFrame = Kp.getFrame((640, 480), '  TELLO AI Live Stream')
+viewFrame = Win.getFrame((640, 480), '  TELLO AI Live Stream')
+
+
+def uav_state():
+    battery = uav.get_battery()
+    temp = uav.get_temperature()
+    alt = uav.get_flight_time()
+    return battery, temp, alt
 
 
 def record():
     # create a VideoWrite object, recording to ./video.avi
-    height, width, _ = uavFrame.frame.shape
+
     video = cv.VideoWriter(f'TELLO AI Videos/{time.strftime("VID%Y%m%d%I%M%S")}.mp4',
-                           cv.VideoWriter_fourcc(*'XVID'), 30, (width, height))
+                           cv.VideoWriter_fourcc(*'XVID'), 30, (640, 480))
 
     while keepRecording:
-        video.write(uavFrame.frame)
+        video.write(frame)
         time.sleep(1 / 30)
 
     video.release()
@@ -48,35 +56,35 @@ def record():
 def get_keyboard_input():
     lr, fb, ud, yv = 0, 0, 0, 0
     speed = 50
-    if Kp.getKey("LEFT"):
+    if Win.getKey("LEFT"):
         lr = -speed
-    elif Kp.getKey("RIGHT"):
+    elif Win.getKey("RIGHT"):
         lr = speed
-    if Kp.getKey("UP"):
+    if Win.getKey("UP"):
         fb = speed
-    elif Kp.getKey("DOWN"):
+    elif Win.getKey("DOWN"):
         fb = -speed
-    if Kp.getKey("w"):
+    if Win.getKey("w"):
         ud = speed
-    elif Kp.getKey("s"):
+    elif Win.getKey("s"):
         ud = -speed
-    if Kp.getKey("a"):
+    if Win.getKey("q"):
         yv = -speed
-    elif Kp.getKey("d"):
+    elif Win.getKey("e"):
         yv = speed
-    if Kp.getKey("q"):
+    if Win.getKey("BACKSPACE"):
         uav.land()
-    if Kp.getKey("e"):
+    if Win.getKey("RETURN"):
         uav.takeoff()
-    if Kp.getKey("z"):
+    if Win.getKey("SPACE"):
         # save image in date format(yyyy-mm-dd-hh-mm-ss.jpg)
-        cv.imwrite(f'TELLO AI Captures/{time.strftime("%Y%m%d%I%M%S")}.jpg', img)
+        cv.imwrite(f'TELLO AI Captures/{time.strftime("%Y%m%d%I%M%S")}.jpg', frame)
         time.sleep(0.03)
     return lr, fb, ud, yv
 
 
-def detect_frames(frame, outputs, conf_thres=None, nms_Thres=None):
-    ht, wt, _ = frame.shape
+def detect_frames(frame_img, outputs, conf_thres=None, nms_Thres=None):
+    ht, wt, _ = frame_img.shape
     bbox = []
     class_ids = []
     conf_vals = []
@@ -101,69 +109,87 @@ def detect_frames(frame, outputs, conf_thres=None, nms_Thres=None):
         box = bbox[i]
         x, y, w, h = box[0], box[1], box[2], box[3]
         class_name = classNames[class_ids[i]].upper()
-        cvz.cornerRect(frame, box, t=2, colorR=(31, 255, 15), colorC=(255, 255, 255), l=20)
-        cv.putText(frame, f'{class_name} {round(float(conf_vals[i] * 100), 2)}%', (x, y - 10),
+        cvz.cornerRect(frame_img, box, t=2, colorR=(31, 255, 15), colorC=(255, 255, 255), l=20)
+        cv.putText(frame_img, f'{class_name} {round(float(conf_vals[i] * 100), 2)}%', (x, y - 10),
                    cv.FONT_HERSHEY_COMPLEX_SMALL, 1,
-                   (31, 255, 15), 1)
+                   (31, 255, 15), 2)
 
 
 # Start recording thread
 stream = Thread(target=record)
+disp_stat = Thread(target=uav_state)
+disp_stat.start()
 stream.start()
+
+
+def set_input_detect(frame_img=None):
+    # convert UAV video to blob format
+    blob = cv.dnn.blobFromImage(frame_img, 1 / 255, (320, 320), [0, 0, 0], 1, crop=False)
+    model.setInput(blob)
+    # get all layers name of Darknet DNN
+    layerNames = model.getLayerNames()
+    # print(layerNames)
+    # To get output layers names
+    outputNames = [layerNames[i[0] - 1] for i in model.getUnconnectedOutLayers()]
+    # print(outputNames)
+    # forward outputs of Darknet DNN
+    output = model.forward(outputNames)
+    # print(len(outputs))
+    # print(outputs[0].shape)
+    return output
+
+
 while True:
     try:
-        # ret, img = cap.read()
+        # get video stream from UAV and resize to 640px by 480px
+        frame = uavFrame.frame
+        frame = cv.resize(frame, (640, 480))
 
         # get keyboard input
         vals = get_keyboard_input()
 
+        # process video frames for DNN
+        outputs = set_input_detect(frame)
+
+        # get Detections from Darknet and draw bounding box(s)
+        detect_frames(frame, outputs, conf_thres=0.4, nms_Thres=0.2)
+
         # send commands to UAV
         uav.send_rc_control(vals[0], vals[1], vals[2], vals[3])
 
-        # get video stream from UAV and resize to 640px by 480px
-        img = uavFrame.frame
-        img = cv.resize(img, (640, 480))
-
-        # convert UAV video to blob format
-        blob = cv.dnn.blobFromImage(img, 1 / 255, (320, 320), [0, 0, 0], 1, crop=False)
-        model.setInput(blob)
-
-        # get all layers name of Darknet DNN
-        layerNames = model.getLayerNames()
-        # print(layerNames)
-
-        # To get output layers names
-        outputNames = [layerNames[i[0] - 1] for i in model.getUnconnectedOutLayers()]
-        # print(outputNames)
-
-        # forward outputs of Darknet DNN
-        outputs = model.forward(outputNames)
-        # print(len(outputs))
-        # print(outputs[0].shape)
-
-        # get Detections from Darknet and draw bounding box(s)
-        detect_frames(img, outputs, conf_thres=0.4, nms_Thres=0.2)
-
-        # cv.imshow("UAV FEED", img)
-
         # display frames
-        Kp.getDisplay(img, viewFrame)
+        Win.getDisplay(frame, viewFrame, True, uav_state())
         cv.waitKey(1)
+
     except Exception as error:
         print("Exception block", error)
-        keepRecording = False
-        stream.join()
+        if not keepRecording:
+            pass
+        else:
+            stream.join()
+        disp_stat.join()
         uav.end()
         sys.exit(0)
     except KeyboardInterrupt:
-        keepRecording = False
-        stream.join()
+        if not keepRecording:
+            pass
+        else:
+            stream.join()
+
+        disp_stat.join()
         uav.end()
         sys.exit(0)
     else:
         # check if windows close button is clicked
-        if Kp.win_close():
-            keepRecording = False
-            stream.join()
+        if Win.win_close():
+            if not keepRecording:
+                pass
+            else:
+                stream.join()
+
+            disp_stat.join()
             uav.end()
             sys.exit(0)
+
+
+

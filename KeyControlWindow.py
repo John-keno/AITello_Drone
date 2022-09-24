@@ -37,13 +37,46 @@ def getKey(keyName):
     return ans
 
 
-def getDisplay(cap_src=None, surface_src=None):
+def getDisplay(cap_src=None, surface_src=None, show_stat=False, stat=('___', '___', '___')):
     pygame.surfarray.blit_array(surface_src, setFrame(cap_src))
-    pygame.draw.rect(surface_src, (255, 0, 0), (20, 25, 20, 5))
+    if show_stat:
+        battery, temp, flight_time = stat
+        # text font
+        font = pygame.font.SysFont("Adobe Hebrew", 20)
+
+        b_title = font.render("Battery", True, "white")
+        b_text = font.render(f'{battery}%', True, "white")
+
+        t_title = font.render("Temp", True, "white")
+        t_text = font.render(f'{temp}°C', True, "white")
+
+        ft_title = font.render("Flight Time", True, "white")
+        ft_text = font.render(f'{flight_time} sec', True, "white")
+
+        # text center positions
+        b_pos = b_title.get_rect(center=(30, 10))
+        b_val_pos = b_text.get_rect(center=(33, 25))
+        t_pos = b_title.get_rect(center=(30, 50))
+        t_val_pos = b_text.get_rect(center=(33, 65))
+        a_pos = b_title.get_rect(center=(30, 90))
+        a_val_pos = b_text.get_rect(center=(33, 105))
+
+        # display stat
+        surface_src.blit(b_title, b_pos)
+        surface_src.blit(b_text, b_val_pos)
+        surface_src.blit(t_title, t_pos)
+        surface_src.blit(t_text, t_val_pos)
+        surface_src.blit(ft_title, a_pos)
+        surface_src.blit(ft_text, a_val_pos)
+    else:
+        pass
     pygame.display.update()
 
 
-# def quit_display
+def show_status(battery='___', temp='___', altitude='___'):
+    return battery, temp, altitude
+
+
 def main():
     if getKey("LEFT"):
         print("Left key pressed")
@@ -62,7 +95,7 @@ def win_close():
 
 
 if __name__ == "__main__":
-    # test code
+    # test code using pc webcam
     camera = cv.VideoCapture(0)
     rec = True
     camera.set(3, 640)
@@ -70,8 +103,6 @@ if __name__ == "__main__":
     init()
     screen = getFrame((640, 480), '  TELLO AI Live Stream')
 
-
-    # # main()
 
     def record():
         # create a VideoWrite object, recording to ./video.avi
@@ -83,32 +114,38 @@ if __name__ == "__main__":
                                cv.VideoWriter_fourcc(*'XVID'), 30, (width, height))
 
         while rec:
-            camera.read()
-            video.write(frame)
+            _, cap = camera.read()
+            video.write(cap)
             time.sleep(1 / 30)
-
         video.release()
 
 
     # main()
     recorder = Thread(target=record)
-    recorder.start()
+    if not rec:
+        pass
+    else:
+        recorder.start()
     try:
         while True:
             ret, frame = camera.read()
             frame = cv.resize(frame, (640, 480))
             main()
-            pygame.draw.rect(screen, (255, 0, 0), (200, 250, 200, 5))
-            getDisplay(frame, screen)
+            getDisplay(frame, screen, True)
             cv.waitKey(1)
             if win_close():
-                rec = False
-                recorder.join()
+                if not rec:
+                    pass
+                else:
+                    recorder.join()
                 sys.exit(0)
     except Exception as err:
         print(err)
         rec = False
-        recorder.join()
+        if not rec:
+            pass
+        else:
+            recorder.join()
         pygame.quit()
         cv.destroyAllWindows()
         sys.exit(0)
