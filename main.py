@@ -7,8 +7,11 @@ import sys
 import KeyControlWindow as Win
 import time
 
-global frame
+# ------------------------initialization-----------------------------------
+
 keepRecording = True
+global img
+global state
 # # Initialize Darknet DNN
 net = cv.dnn.readNet("darknet/yolov4-tiny.weights", "darknet/yolov4-tiny.cfg")
 model = cv.dnn_DetectionModel(net)
@@ -34,23 +37,25 @@ viewFrame = Win.getFrame((640, 480), '  TELLO AI Live Stream')
 
 
 def uav_state():
+    global state
     battery = uav.get_battery()
     temp = uav.get_temperature()
-    alt = uav.get_flight_time()
-    return battery, temp, alt
+    flight_time = uav.get_flight_time()
+    state = (battery, temp, flight_time)
 
 
 def record():
     # create a VideoWrite object, recording to ./video.avi
-
-    video = cv.VideoWriter(f'TELLO AI Videos/{time.strftime("VID%Y%m%d%I%M%S")}.mp4',
-                           cv.VideoWriter_fourcc(*'XVID'), 30, (640, 480))
+    height, width, _ = uavFrame.frame.shape
+    video = cv.VideoWriter(f'TELLO AI Videos/{time.strftime("VID%Y%m%d%I%M%S")}.avi',
+                           cv.VideoWriter_fourcc(*'XVID'), 30, (width, height))
 
     while keepRecording:
-        video.write(frame)
+        video.write(uavFrame.frame)
         time.sleep(1 / 30)
 
     video.release()
+    stream.join()
 
 
 def get_keyboard_input():
@@ -74,11 +79,12 @@ def get_keyboard_input():
         yv = speed
     if Win.getKey("BACKSPACE"):
         uav.land()
+        time.sleep(0.03)
     if Win.getKey("RETURN"):
         uav.takeoff()
     if Win.getKey("SPACE"):
         # save image in date format(yyyy-mm-dd-hh-mm-ss.jpg)
-        cv.imwrite(f'TELLO AI Captures/{time.strftime("%Y%m%d%I%M%S")}.jpg', frame)
+        cv.imwrite(f'TELLO AI Captures/{time.strftime("%Y%m%d%I%M%S")}.jpg', img)
         time.sleep(0.03)
     return lr, fb, ud, yv
 
@@ -115,13 +121,6 @@ def detect_frames(frame_img, outputs, conf_thres=None, nms_Thres=None):
                    (31, 255, 15), 2)
 
 
-# Start recording thread
-stream = Thread(target=record)
-disp_stat = Thread(target=uav_state)
-disp_stat.start()
-stream.start()
-
-
 def set_input_detect(frame_img=None):
     # convert UAV video to blob format
     blob = cv.dnn.blobFromImage(frame_img, 1 / 255, (320, 320), [0, 0, 0], 1, crop=False)
@@ -139,57 +138,61 @@ def set_input_detect(frame_img=None):
     return output
 
 
+# ---------------------------main function-----------------------------
+
+# Start recording thread
+stream = Thread(target=record)
+disp_stat = Thread(target=uav_state)
+if keepRecording:
+    stream.start()
+
+disp_stat.start()
+
 while True:
     try:
-        # get video stream from UAV and resize to 640px by 480px
-        frame = uavFrame.frame
-        frame = cv.resize(frame, (640, 480))
+        # get video stream from UAV
+        img = uavFrame.frame
 
         # get keyboard input
         vals = get_keyboard_input()
 
+        # resize to 640px by 480px
+        img = cv.resize(img, (640, 480))
+
         # process video frames for DNN
-        outputs = set_input_detect(frame)
+        outputs = set_input_detect(img)
 
         # get Detections from Darknet and draw bounding box(s)
-        detect_frames(frame, outputs, conf_thres=0.4, nms_Thres=0.2)
+        detect_frames(img, outputs, conf_thres=0.4, nms_Thres=0.2)
 
         # send commands to UAV
         uav.send_rc_control(vals[0], vals[1], vals[2], vals[3])
 
         # display frames
-        Win.getDisplay(frame, viewFrame, True, uav_state())
+        Win.getDisplay(img, viewFrame, True, state)
         cv.waitKey(1)
-
-    except Exception as error:
-        print("Exception block", error)
-        if not keepRecording:
-            pass
-        else:
-            stream.join()
-        disp_stat.join()
-        uav.end()
-        sys.exit(0)
-    except KeyboardInterrupt:
-        if not keepRecording:
-            pass
-        else:
-            stream.join()
-
-        disp_stat.join()
-        uav.end()
-        sys.exit(0)
-    else:
         # check if windows close button is clicked
         if Win.win_close():
-            if not keepRecording:
-                pass
-            else:
+            if keepRecording:
+                keepRecording = False
                 stream.join()
+            else:
+                pass
 
             disp_stat.join()
             uav.end()
-            sys.exit(0)
+            cv.destroyAllWindows()
+            break
+    except KeyboardInterrupt:
+        break
 
+if keepRecording:
+    keepRecording = False
+    stream.join()
+else:
+    pass
 
-
+disp_stat.join()
+uav.end()
+cv.destroyAllWindows()
+sys.exit(0)

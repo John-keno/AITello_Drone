@@ -78,8 +78,17 @@ def show_status(battery='___', temp='___', altitude='___'):
 
 
 def main():
-    if getKey("LEFT"):
-        print("Left key pressed")
+    keye = pygame.key.get_pressed().count(1)
+    has = int(time.process_time()) % 2
+    # print(int(time.process_time()) % 2)
+    # print(has)
+    if getKey("LEFT") and keye:
+        if has == 0:
+            print(has)
+            print("Left key pressed {}".format(keye))
+            time.sleep(0.03)
+        else:
+            pass
 
     if getKey("RIGHT"):
         print("Right key Pressed")
@@ -97,7 +106,7 @@ def win_close():
 if __name__ == "__main__":
     # test code using pc webcam
     camera = cv.VideoCapture(0)
-    rec = True
+    rec = False
     camera.set(3, 640)
     camera.set(4, 480)
     init()
@@ -128,10 +137,11 @@ if __name__ == "__main__":
         recorder.start()
     try:
         while True:
-            ret, frame = camera.read()
-            frame = cv.resize(frame, (640, 480))
+            ret, img = camera.read()
+            img = cv.resize(img, (640, 480))
+
             main()
-            getDisplay(frame, screen, True)
+            getDisplay(img, screen, True)
             cv.waitKey(1)
             if win_close():
                 if not rec:
